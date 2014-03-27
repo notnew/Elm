@@ -65,14 +65,14 @@ duplicateConstructors decls =
     map (dupErr "definition of type constructor") (dups typeCtors) ++
     map (dupErr "definition of data constructor") (dups dataCtors)
   where
-    typeCtors = [ name | D.Datatype name _ _ <- decls ]
-    dataCtors = concat [ map fst patterns | D.Datatype _ _ patterns <- decls ]
+    typeCtors = [ name | D.Datatype name _ _ _ <- decls ]
+    dataCtors = concat [ map fst patterns | D.Datatype _ _ patterns _ <- decls ]
 
 illFormedTypes :: [D.Declaration] -> [Doc]
 illFormedTypes decls = map report (Maybe.mapMaybe isIllFormed (aliases ++ adts))
     where
-      aliases = [ (decl, tvars, [tipe]) | decl@(D.TypeAlias _ tvars tipe) <- decls ]
-      adts = [ (decl, tvars, concatMap snd ctors) | decl@(D.Datatype _ tvars ctors) <- decls ]
+      aliases = [ (decl, tvars, [tipe]) | decl@(D.TypeAlias _ tvars tipe _) <- decls ]
+      adts = [ (decl, tvars, concatMap snd ctors) | decl@(D.Datatype _ tvars ctors _) <- decls ]
 
       freeVars tipe =
           case tipe of
@@ -115,7 +115,7 @@ illFormedTypes decls = map report (Maybe.mapMaybe isIllFormed (aliases ++ adts))
 
 infiniteTypeAliases :: [D.Declaration] -> [Doc]
 infiniteTypeAliases decls =
-    [ report name tvars tipe | D.TypeAlias name tvars tipe <- decls
+    [ report name tvars tipe | D.TypeAlias name tvars tipe _ <- decls
                              , infiniteType name tipe ]
     where
       infiniteType name tipe =
@@ -131,9 +131,9 @@ infiniteTypeAliases decls =
 
       report name args tipe =
           P.vcat [ P.text $ eightyCharLines 0 msg1
-                 , indented $ D.TypeAlias name args tipe
+                 , indented $ D.TypeAlias name args tipe []
                  , P.text $ eightyCharLines 0 msg2
-                 , indented $ D.Datatype name args [(name,[tipe])]
+                 , indented $ D.Datatype name args [(name,[tipe])] []
                  , P.text $ eightyCharLines 0 msg3 ++ "\n"
                  ]
           where

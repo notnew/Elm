@@ -23,11 +23,11 @@ combineAnnotations = go
             -- simple cases, pass them through with no changes
             [] -> return []
 
-            Datatype name tvars ctors : rest ->
-                (:) (Datatype name tvars ctors) <$> go rest
+            Datatype name tvars ctors derivations : rest ->
+                (:) (Datatype name tvars ctors derivations) <$> go rest
 
-            TypeAlias name tvars alias : rest ->
-                (:) (TypeAlias name tvars alias) <$> go rest
+            TypeAlias name tvars alias derivations : rest ->
+                (:) (TypeAlias name tvars alias derivations) <$> go rest
 
             Fixity assoc prec op : rest ->
                 (:) (Fixity assoc prec op) <$> go rest

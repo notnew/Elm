@@ -15,7 +15,8 @@ toDefs decl =
   case decl of
     D.Definition def -> [def]
 
-    D.Datatype name tvars constructors -> concatMap toDefs' constructors
+    D.Datatype name tvars constructors derivations ->
+        concatMap toDefs' constructors
       where
         toDefs' (ctor, tipes) =
             let vars = take (length tipes) arguments
@@ -23,7 +24,7 @@ toDefs decl =
                 body = A.none . E.Data ctor $ map (A.none . E.rawVar) vars
             in  [ definition ctor (buildFunction body vars) (foldr T.Lambda tbody tipes) ]
 
-    D.TypeAlias name _ tipe@(T.Record fields ext) ->
+    D.TypeAlias name _ tipe@(T.Record fields ext) derivations ->
         [ definition name (buildFunction record vars) (foldr T.Lambda tipe args) ]
       where
         args = map snd fields ++ maybe [] (\x -> [T.Var x]) ext
@@ -38,7 +39,7 @@ toDefs decl =
 
     -- Type aliases must be added to an extended equality dictionary,
     -- but they do not require any basic constraints.
-    D.TypeAlias _ _ _ -> []
+    D.TypeAlias _ _ _ derivations -> []
 
     D.Port port ->
         case port of

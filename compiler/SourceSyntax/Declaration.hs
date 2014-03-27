@@ -9,8 +9,8 @@ import Text.PrettyPrint as P
 
 data Declaration' port def
     = Definition def
-    | Datatype String [String] [(String,[T.Type])]
-    | TypeAlias String [String] T.Type
+    | Datatype String [String] [(String,[T.Type])] [String]
+    | TypeAlias String [String] T.Type [String]
     | Port port
     | Fixity Assoc Int String
       deriving (Show)
@@ -50,7 +50,7 @@ instance Binary Assoc where
                 0 -> L
                 1 -> N
                 2 -> R
-                _ -> error "Error reading valid associativity from serialized string"
+                _ -> error "Error: invalid Associativity in serialized string"
 
     put assoc = putWord8 $ case assoc of { L -> 0 ; N -> 1 ; R -> 2 }
 
@@ -59,18 +59,21 @@ instance (Pretty port, Pretty def) => Pretty (Declaration' port def) where
     case decl of
       Definition def -> pretty def
 
-      Datatype tipe tvars ctors ->
-          P.hang (P.text "data" <+> P.text tipe <+> P.hsep (map P.text tvars)) 4
-               (P.sep $ zipWith join ("=" : repeat "|") ctors)
+      Datatype tipe tvars ctors derivations ->
+          P.hang data' 4 (P.sep ctors') $+$ P.nest 4 (prettyDeriving derivations)
           where
+            data' = P.text "data" <+> P.text tipe <+> P.hsep (map P.text tvars)
+            ctors' = zipWith join ("=" : repeat "|") ctors
+
             join c ctor = P.text c <+> prettyCtor ctor
             prettyCtor (name, tipes) =
                 P.hang (P.text name) 2 (P.sep (map T.prettyParens tipes))
 
-      TypeAlias name tvars tipe ->
-          P.hang (P.text "type" <+> name' <+> P.equals) 4 (pretty tipe)
+      TypeAlias name tvars tipe derivations ->
+          alias $+$ P.nest 4 (prettyDeriving derivations)
           where
             name' = P.text name <+> P.hsep (map P.text tvars)
+            alias = P.hang (P.text "type" <+> name' <+> P.equals) 4 (pretty tipe)
 
       Port port -> pretty port
 
@@ -80,6 +83,12 @@ instance (Pretty port, Pretty def) => Pretty (Declaration' port def) where
                        L -> P.text "l"
                        N -> P.empty
                        R -> P.text "r"
+
+prettyDeriving :: [String] -> P.Doc
+prettyDeriving deriveables =
+    case deriveables of
+      [] -> P.empty
+      ds -> P.text "deriving" <+> P.hsep (P.punctuate P.comma $ map P.text ds)
 
 instance Pretty ParsePort where
   pretty port =

@@ -24,7 +24,8 @@ alias = do
   args <- spacePrefix lowVar
   padded equals
   tipe <- Type.expr
-  return (D.TypeAlias name args tipe)
+  ds <- option [] derivations
+  return $ D.TypeAlias name args tipe ds
 
 datatype :: IParser D.ParseDeclaration
 datatype = do
@@ -34,8 +35,13 @@ datatype = do
   args <- spacePrefix lowVar
   padded equals
   tcs <- pipeSep1 Type.constructor
-  return $ D.Datatype name args tcs
+  ds <- option [] derivations
+  return $ D.Datatype name args tcs ds
 
+derivations :: IParser [String]
+derivations = do
+  padded (reserved "deriving")
+  commaSep1 capVar
 
 infixDecl :: IParser D.ParseDeclaration
 infixDecl = do
@@ -46,7 +52,6 @@ infixDecl = do
   n <- digit
   forcedWS
   D.Fixity assoc (read [n]) <$> anyOp
-
 
 port :: IParser D.ParseDeclaration
 port =
