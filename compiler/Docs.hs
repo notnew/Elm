@@ -101,7 +101,11 @@ docThing = uncommentable <|> commented <|> uncommented ""
         uncommented comment
 
       uncommented comment = do
-        (src,def) <- withSource $ choice [ alias, datatype, D.Definition <$> typeAnnotation ]
+        (src,def) <- withSource $
+                     choice [ alias
+                            , datatype
+                            , D.Definition <$> typeAnnotation Src.TypeAnnotation
+                            ]
         return (comment, def, src)
 
 

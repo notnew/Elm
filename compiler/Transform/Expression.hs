@@ -4,31 +4,33 @@ module Transform.Expression (crawlLet, checkPorts) where
 import Control.Applicative ((<$>),(<*>))
 import AST.Annotation ( Annotated(A) )
 import AST.Expression.General
-import qualified AST.Expression.Canonical as Canonical
+import qualified AST.Expression.Valid as Valid
 import AST.Type (Type, CanonicalType)
 
 crawlLet :: ([def] -> Either a [def'])
-         -> Expr ann def var
-         -> Either a (Expr ann def' var)
+         -> (cmd -> Either a cmd')
+         -> Expr ann def cmd var
+         -> Either a (Expr ann def' cmd' var)
 crawlLet = crawl (\_ _ -> return ()) (\_ _ -> return ())
 
 checkPorts :: (String -> CanonicalType -> Either a ())
            -> (String -> CanonicalType -> Either a ())
-           -> Canonical.Expr
-           -> Either a Canonical.Expr
+           -> Valid.CanonicalExpr
+           -> Either a Valid.CanonicalExpr
 checkPorts inCheck outCheck expr =
-    crawl inCheck outCheck (mapM checkDef) expr
+    crawl inCheck outCheck (mapM checkDef) return expr
     where
-      checkDef def@(Canonical.Definition _ body _) =
+      checkDef def@(Valid.Definition _ body _) =
           do _ <- checkPorts inCheck outCheck body
              return def
 
 crawl :: (String -> Type var -> Either a ())
       -> (String -> Type var -> Either a ())
       -> ([def] -> Either a [def'])
-      -> Expr ann def var
-      -> Either a (Expr ann def' var)
-crawl portInCheck portOutCheck defsTransform = go
+      -> (cmd -> Either a cmd')
+      -> Expr ann def cmd var
+      -> Either a (Expr ann def' cmd' var)
+crawl portInCheck portOutCheck defsTransform cmdTransform = go
     where
       go (A srcSpan expr) =
           A srcSpan <$>
@@ -50,6 +52,7 @@ crawl portInCheck portOutCheck defsTransform = go
             Record fields -> Record <$> mapM (\(k,v) -> (,) k <$> go v) fields
             Markdown uid md es -> Markdown uid md <$> mapM go es
             Let defs body -> Let <$> defsTransform defs <*> go body
+            With impl cmd -> With <$> go impl <*> cmdTransform cmd
             GLShader uid src gltipe -> return $ GLShader uid src gltipe
             PortIn name st ->
                 do portInCheck name st

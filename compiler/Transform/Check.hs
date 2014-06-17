@@ -1,6 +1,7 @@
 {-# OPTIONS_GHC -Wall #-}
 module Transform.Check (mistakes) where
 
+import Control.Applicative ((<$>),(<*>))
 import qualified Control.Arrow as Arrow
 import qualified Data.List as List
 import qualified Data.Maybe as Maybe
@@ -51,15 +52,26 @@ duplicates decls =
               D.Out name expr _ -> (name, [expr])
               D.In name _ -> (name, [])
 
-    exprDups :: Valid.Expr -> Either String Valid.Expr
-    exprDups expr = Expr.crawlLet defsDups expr
+    exprDups :: Valid.RawExpr -> Either String Valid.RawExpr
+    exprDups expr = Expr.crawlLet defsDups cmdDups expr
 
-    defsDups :: [Valid.Def] -> Either String [Valid.Def]
+    defsDups :: [Valid.RawDef] -> Either String [Valid.RawDef]
     defsDups defs =
         let varsIn (Valid.Definition pattern _ _) = Pattern.boundVarList pattern in
         case dups $ concatMap varsIn defs of
           []     -> Right defs
           name:_ -> Left name
+
+    cmdDups :: Valid.RawCmd -> Either String Valid.RawCmd
+    cmdDups cmd =
+        case cmd of
+          Valid.Do e            -> Valid.Do <$> exprDups e
+          Valid.DoAnd e c       -> Valid.DoAnd <$> exprDups e <*> cmdDups c
+          Valid.CmdLet defs c   -> Valid.CmdLet <$> defsDups defs <*> cmdDups c
+          Valid.AndThen p e t c ->
+              do e' <- exprDups e
+                 c' <- cmdDups c
+                 return (Valid.AndThen p e' t c')
 
 duplicateConstructors :: [D.ValidDecl] -> [String]
 duplicateConstructors decls = 

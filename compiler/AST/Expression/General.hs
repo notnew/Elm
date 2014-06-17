@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -Wall #-}
+{-# LANGUAGE FlexibleContexts, UndecidableInstances #-}
 
 {-| The Abstract Syntax Tree (AST) for expressions comes in a couple formats.
 The first is the fully general version and is labeled with a prime (Expr').
@@ -35,62 +36,66 @@ move through the compilation process. The type holes are used to represent:
        with information about what module a variable came from.
 
 -}
-type Expr annotation definition variable =
-    Annotation.Annotated annotation (Expr' annotation definition variable)
+type Expr annotation definition assignment variable =
+    Annotation.Annotated annotation (Expr' annotation definition assignment variable)
 
-data Expr' ann def var
+data Expr' ann def cmd var
     = Literal Literal.Literal
     | Var var
-    | Range (Expr ann def var) (Expr ann def var)
-    | ExplicitList [Expr ann def var]
-    | Binop var (Expr ann def var) (Expr ann def var)
-    | Lambda (Pattern.Pattern var) (Expr ann def var)
-    | App (Expr ann def var) (Expr ann def var)
-    | MultiIf [(Expr ann def var,Expr ann def var)]
-    | Let [def] (Expr ann def var)
-    | Case (Expr ann def var) [(Pattern.Pattern var, Expr ann def var)]
-    | Data String [Expr ann def var]
-    | Access (Expr ann def var) String
-    | Remove (Expr ann def var) String
-    | Insert (Expr ann def var) String (Expr ann def var)
-    | Modify (Expr ann def var) [(String, Expr ann def var)]
-    | Record [(String, Expr ann def var)]
-    | Markdown String String [Expr ann def var]
+    | Range (Expr ann def cmd var) (Expr ann def cmd var)
+    | ExplicitList [Expr ann def cmd var]
+    | Binop var (Expr ann def cmd var) (Expr ann def cmd var)
+    | Lambda (Pattern.Pattern var) (Expr ann def cmd var)
+    | App (Expr ann def cmd var) (Expr ann def cmd var)
+    | MultiIf [(Expr ann def cmd var,Expr ann def cmd var)]
+    | Let [def] (Expr ann def cmd var)
+    | Case (Expr ann def cmd var) [(Pattern.Pattern var, Expr ann def cmd var)]
+    | With (Expr ann def cmd var) cmd
+    | Data String [Expr ann def cmd var]
+    | Access (Expr ann def cmd var) String
+    | Remove (Expr ann def cmd var) String
+    | Insert (Expr ann def cmd var) String (Expr ann def cmd var)
+    | Modify (Expr ann def cmd var) [(String, Expr ann def cmd var)]
+    | Record [(String, Expr ann def cmd var)]
+    | Markdown String String [Expr ann def cmd var]
     -- for type checking and code gen only
     | PortIn String (Type var)
-    | PortOut String (Type var) (Expr ann def var)
+    | PortOut String (Type var) (Expr ann def cmd var)
     | GLShader String String Literal.GLShaderTipe
     deriving (Show)
 
 
 ---- UTILITIES ----
 
-rawVar :: String -> Expr' ann def Var.Raw
+rawVar :: String -> Expr' ann def cmd Var.Raw
 rawVar x = Var (Var.Raw x)
 
-localVar :: String -> Expr' ann def Var.Canonical
+localVar :: String -> Expr' ann def cmd Var.Canonical
 localVar x = Var (Var.Canonical Var.Local x)
 
-tuple :: [Expr ann def var] -> Expr' ann def var
+tuple :: [Expr ann def cmd var] -> Expr' ann def cmd var
 tuple es = Data ("_Tuple" ++ show (length es)) es
 
-delist :: Expr ann def var -> [Expr ann def var]
+delist :: Expr ann def cmd var -> [Expr ann def cmd var]
 delist (Annotation.A _ (Data "::" [h,t])) = h : delist t
 delist _ = []
 
 saveEnvName :: String
 saveEnvName = "_save_the_environment!!!"
 
-dummyLet :: (Pretty def) => [def] -> Expr Annotation.Region def Var.Canonical
+dummyLet :: (Pretty def, Pretty cmd) =>
+            [def] -> Expr Annotation.Region def cmd Var.Canonical
 dummyLet defs = 
      Annotation.none $ Let defs (Annotation.none $ Var (Var.builtin saveEnvName))
 
-instance (Pretty def, Pretty var, Var.ToString var) => Pretty (Expr' ann def var) where
+instance (Pretty def, Pretty cmd, Var.ToString var) =>
+    Pretty (Expr' ann def cmd var)
+ where
   pretty expr =
    case expr of
      Literal lit -> pretty lit
 
-     Var x -> pretty x
+     Var x -> P.text (Var.toString x)
 
      Range e1 e2 -> P.brackets (pretty e1 <> P.text ".." <> pretty e2)
 
@@ -127,6 +132,9 @@ instance (Pretty def, Pretty var, Var.ToString var) => Pretty (Expr' ann def var
          where
            pexpr = P.sep [ P.text "case" <+> pretty e, P.text "of" ]
            pretty' (p,b) = pretty p <+> P.text "->" <+> pretty b
+
+     With impl cmd ->
+         P.hang (P.text "with" <+> pretty impl) 2 (pretty cmd)
 
      Data "::" [hd,tl] -> pretty hd <+> P.text "::" <+> pretty tl
      Data "[]" [] -> P.text "[]"
@@ -165,13 +173,13 @@ instance (Pretty def, Pretty var, Var.ToString var) => Pretty (Expr' ann def var
 
      PortOut _ _ signal -> pretty signal
 
-collectApps :: Expr ann def var -> [Expr ann def var]
+collectApps :: Expr ann def cmd var -> [Expr ann def cmd var]
 collectApps annExpr@(Annotation.A _ expr) =
   case expr of
     App a b -> collectApps a ++ [b]
     _ -> [annExpr]
 
-collectLambdas :: Expr ann def var -> ([Pattern.Pattern var], Expr ann def var)
+collectLambdas :: Expr ann def cmd var -> ([Pattern.Pattern var], Expr ann def cmd var)
 collectLambdas lexpr@(Annotation.A _ expr) =
   case expr of
     Lambda pattern body ->
@@ -180,7 +188,8 @@ collectLambdas lexpr@(Annotation.A _ expr) =
 
     _ -> ([], lexpr)
 
-prettyParens :: (Pretty def, Pretty var, Var.ToString var) => Expr ann def var -> Doc
+prettyParens :: (Pretty def, Pretty cmd, Var.ToString var) =>
+                Expr ann def cmd var -> Doc
 prettyParens (Annotation.A _ expr) = parensIf needed (pretty expr)
   where
     needed =

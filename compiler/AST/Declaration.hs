@@ -4,7 +4,6 @@ module AST.Declaration where
 import Data.Binary
 import qualified AST.Expression.Source as Source
 import qualified AST.Expression.Valid as Valid
-import qualified AST.Expression.Canonical as Canonical
 import qualified AST.Type as T
 import qualified AST.Variable as Var
 import AST.PrettyPrint
@@ -31,11 +30,14 @@ data Port expr var
     | In String (T.Type var)
       deriving (Show)
 
-type SourceDecl    = Declaration' RawPort Source.Def Var.Raw
-type ValidDecl     = Declaration' (Port Valid.Expr Var.Raw) Valid.Def Var.Raw
-type CanonicalDecl = Declaration' (Port Canonical.Expr Var.Canonical)
-                                  Canonical.Def
-                                  Var.Canonical
+type SourceDecl =
+    Declaration' RawPort Source.Def Var.Raw
+
+type ValidDecl =
+    Declaration' (Port Valid.RawExpr Var.Raw) Valid.RawDef Var.Raw
+
+type CanonicalDecl =
+    Declaration' (Port Valid.CanonicalExpr Var.Canonical) Valid.CanonicalDef Var.Canonical
 
 portName :: Port expr var -> String
 portName port =

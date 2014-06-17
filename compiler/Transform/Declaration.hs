@@ -6,74 +6,69 @@ import Control.Applicative ((<$>))
 import qualified AST.Annotation as A
 import qualified AST.Declaration as D
 import qualified AST.Expression.General as E
-import qualified AST.Expression.Source as Source
-import qualified AST.Expression.Valid as Valid
-import qualified AST.Expression.Canonical as Canonical
+import qualified AST.Expression.Source as S
+import qualified AST.Expression.Valid as V
 import qualified AST.Pattern as P
 import qualified AST.Type as T
 import qualified AST.Variable as Var
 
-import qualified Transform.Expression as Expr
 import qualified Transform.Definition as Def
 
 
 combineAnnotations :: [D.SourceDecl] -> Either String [D.ValidDecl]
-combineAnnotations = go
-    where
-      msg x = "Syntax Error: The type annotation for '" ++ x ++
+combineAnnotations decls =
+  let go = combineAnnotations
+      msg x = "Formatting Error: The type annotation for '" ++ x ++
               "' must be directly above its definition."
+  in
+  case decls of
+    -- simple cases, pass them through with no changes
+    [] -> return []
 
-      exprCombineAnnotations = Expr.crawlLet Def.combineAnnotations
+    D.Datatype name tvars ctors : rest ->
+        (:) (D.Datatype name tvars ctors) <$> go rest
 
-      go decls =
-          case decls of
-            -- simple cases, pass them through with no changes
-            [] -> return []
+    D.TypeAlias name tvars alias : rest ->
+        (:) (D.TypeAlias name tvars alias) <$> go rest
 
-            D.Datatype name tvars ctors : rest ->
-                (:) (D.Datatype name tvars ctors) <$> go rest
+    D.Fixity assoc prec op : rest ->
+        (:) (D.Fixity assoc prec op) <$> go rest
 
-            D.TypeAlias name tvars alias : rest ->
-                (:) (D.TypeAlias name tvars alias) <$> go rest
+    -- combine definitions
+    D.Definition def : defRest ->
+        case def of
+          S.Definition pat expr ->
+              do expr' <- Def.validateExpr expr
+                 let def' = V.Definition pat expr' Nothing
+                 (:) (D.Definition def') <$> go defRest
 
-            D.Fixity assoc prec op : rest ->
-                (:) (D.Fixity assoc prec op) <$> go rest
+          S.TypeAnnotation name tipe ->
+              case defRest of
+                D.Definition (S.Definition pat@(P.Var name') expr) : rest
+                    | name == name' ->
+                        do expr' <- Def.validateExpr expr
+                           let def' = V.Definition pat expr' (Just tipe)
+                           (:) (D.Definition def') <$> go rest
 
-            -- combine definitions
-            D.Definition def : defRest ->
-                case def of
-                  Source.Definition pat expr ->
-                      do expr' <- exprCombineAnnotations expr
-                         let def' = Valid.Definition pat expr' Nothing
-                         (:) (D.Definition def') <$> go defRest
+                _ -> Left (msg name)
 
-                  Source.TypeAnnotation name tipe ->
-                      case defRest of
-                        D.Definition (Source.Definition pat@(P.Var name') expr) : rest
-                            | name == name' ->
-                                do expr' <- exprCombineAnnotations expr
-                                   let def' = Valid.Definition pat expr' (Just tipe)
-                                   (:) (D.Definition def') <$> go rest
+    -- combine ports
+    D.Port port : portRest ->
+        case port of
+          D.PPDef name _ -> Left (msg name)
+          D.PPAnnotation name tipe ->
+              case portRest of
+                D.Port (D.PPDef name' expr) : rest | name == name' ->
+                    do expr' <- Def.validateExpr expr
+                       (:) (D.Port (D.Out name expr' tipe)) <$> go rest
 
-                        _ -> Left (msg name)
-
-            -- combine ports
-            D.Port port : portRest ->
-                case port of
-                  D.PPDef name _ -> Left (msg name)
-                  D.PPAnnotation name tipe ->
-                      case portRest of
-                        D.Port (D.PPDef name' expr) : rest | name == name' ->
-                            do expr' <- exprCombineAnnotations expr
-                               (:) (D.Port (D.Out name expr' tipe)) <$> go rest
-
-                        _ -> (:) (D.Port (D.In name tipe)) <$> go portRest
+                _ -> (:) (D.Port (D.In name tipe)) <$> go portRest
 
 
-toExpr :: String -> [D.CanonicalDecl] -> [Canonical.Def]
+toExpr :: String -> [D.CanonicalDecl] -> [V.CanonicalDef]
 toExpr moduleName = concatMap (toDefs moduleName)
 
-toDefs :: String -> D.CanonicalDecl -> [Canonical.Def]
+toDefs :: String -> D.CanonicalDecl -> [V.CanonicalDef]
 toDefs moduleName decl =
   let typeVar = Var.Canonical (Var.Module moduleName) in
   case decl of
@@ -120,9 +115,10 @@ toDefs moduleName decl =
 arguments :: [String]
 arguments = map (:[]) ['a'..'z'] ++ map (\n -> "_" ++ show (n :: Int)) [1..]
 
-buildFunction :: Canonical.Expr -> [String] -> Canonical.Expr
+buildFunction :: V.CanonicalExpr -> [String] -> V.CanonicalExpr
 buildFunction body@(A.A s _) vars =
     foldr (\p e -> A.A s (E.Lambda p e)) body (map P.Var vars)
 
-definition :: String -> Canonical.Expr -> T.CanonicalType -> Canonical.Def
-definition name expr tipe = Canonical.Definition (P.Var name) expr (Just tipe)
+definition :: String -> V.CanonicalExpr -> T.CanonicalType -> V.CanonicalDef
+definition name expr tipe =
+    V.Definition (P.Var name) expr (Just tipe)

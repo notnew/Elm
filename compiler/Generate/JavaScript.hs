@@ -19,7 +19,8 @@ import qualified Generate.Markdown as MD
 import AST.Annotation
 import AST.Module
 import AST.Expression.General
-import qualified AST.Expression.Canonical as Canonical
+import AST.Expression.Valid (CanonicalExpr, CanonicalDef)
+import qualified AST.Expression.Valid as Valid
 import qualified AST.Module as Module
 import qualified AST.Helpers as Help
 import AST.Literal
@@ -59,7 +60,7 @@ literal lit =
     FloatNum n -> NumLit () n
     Boolean  b -> BoolLit () b
 
-expression :: Canonical.Expr -> State Int (Expression ())
+expression :: Valid.CanonicalExpr -> State Int (Expression ())
 expression (A region expr) =
     case expr of
       Var var -> return $ Var.canonical var
@@ -146,6 +147,8 @@ expression (A region expr) =
              exp <- expression e'
              return $ function [] (stmts ++ [ ret exp ]) `call` []
 
+      With impl cmd -> command region impl cmd
+
       MultiIf branches ->
         do branches' <- forM branches $ \(b,e) -> (,) <$> expression b <*> expression e
            return $ case last branches of
@@ -200,8 +203,8 @@ expression (A region expr) =
              return $ Var.value "Native.Ports" "portOut" `call`
                         [ string name, Port.outgoing tipe, value' ]
 
-definition :: Canonical.Def -> State Int [Statement ()]
-definition (Canonical.Definition pattern expr@(A region _) _) = do
+definition :: Valid.CanonicalDef -> State Int [Statement ()]
+definition (Valid.Definition pattern expr@(A region _) _) = do
   expr' <- expression expr
   let assign x = varDecl x expr'
   case pattern of
@@ -242,7 +245,56 @@ definition (Canonical.Definition pattern expr@(A region _) _) = do
           vars = P.boundVarList pattern
           mkVar = A region . localVar
           toDef y = let expr =  A region $ Case (mkVar "_") [(pattern, mkVar y)]
-                    in  definition $ Canonical.Definition (P.Var y) expr Nothing
+                    in  definition $ Valid.Definition (P.Var y) expr Nothing
+
+-- Assumes that the outermost command will never be a CmdLet. Those should be
+-- converted to normal let-expressions.
+command :: Region -> Valid.CanonicalExpr -> Valid.CanonicalCmd
+        -> State Int (Expression ())
+command region impl cmd =
+  do x <- Case.newVar
+     e <- expression impl
+     let setup = VarDeclStmt () [varDecl x e]
+     stmts <- go x cmd
+     return (function [] (setup : stmts) `call` [])
+  where
+    ann = A region
+
+    go :: String -> Valid.CanonicalCmd -> State Int [Statement ()]
+    go x cmd =
+      let andThen c1 c2 =
+              ref "A2" `call` [ obj [x,"andThen"], c1, c2 ]
+      in
+      case cmd of
+        Valid.Do expr ->
+            do expr' <- expression expr
+               return [ ret expr' ]
+
+        Valid.DoAnd expr cmd' ->
+            do expr' <- expression expr
+               stmts <- go x cmd'
+               return [ ret (expr' `andThen` function ["_"] stmts) ]
+
+        Valid.CmdLet _ _ ->
+            let (defs, cmd') = combineLets id cmd in
+            do stmts  <- concat <$> mapM definition defs
+               stmts' <- go x cmd'
+               return (stmts ++ stmts')
+
+        Valid.AndThen pattern expr _ cmd' ->
+            do expr' <- expression expr
+               callback <- mkCallback
+               return [ ret (expr' `andThen` callback) ]
+            where
+              mkCallback =
+                  case pattern of
+                    P.Var var -> function [var] <$> go x cmd'
+                    _ -> expression (ann (Lambda pattern (ann (With (ann (Var (Var.local x))) cmd'))))
+
+    combineLets mkDefs cmd =
+      case cmd of
+        Valid.CmdLet defs cmd' -> combineLets (mkDefs . (defs++)) cmd'
+        _ -> (mkDefs [], cmd)
 
 match :: Region -> Case.Match -> State Int [Statement ()]
 match region mtch =
@@ -295,7 +347,7 @@ clause region variable (Case.Clause value vars mtch) =
                              Left (Var.Canonical _ name) ->
                                  string name
 
-flattenLets :: [Canonical.Def] -> Canonical.Expr -> ([Canonical.Def], Canonical.Expr)
+flattenLets :: [CanonicalDef] -> CanonicalExpr -> ([CanonicalDef], CanonicalExpr)
 flattenLets defs lexpr@(A _ expr) =
     case expr of
       Let ds body -> flattenLets (defs ++ ds) body
@@ -365,7 +417,7 @@ generate modul =
                _   -> ExprStmt () $
                       AssignExpr () OpAssign (LDot () (obj (init path)) (last path)) expr
 
-binop :: Region -> Var.Canonical -> Canonical.Expr -> Canonical.Expr
+binop :: Region -> Var.Canonical -> CanonicalExpr -> CanonicalExpr
       -> State Int (Expression ())
 binop region func@(Var.Canonical home op) e1 e2 =
     case (home, op) of

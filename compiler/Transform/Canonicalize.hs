@@ -11,7 +11,6 @@ import qualified Data.Traversable as T
 
 import AST.Expression.General (Expr'(..), dummyLet)
 import qualified AST.Expression.Valid as Valid
-import qualified AST.Expression.Canonical as Canonical
 
 import AST.Module (CanonicalBody(..))
 import qualified AST.Module as Module
@@ -150,7 +149,7 @@ declaration env decl =
           do p' <- canonicalize pattern "definition" p env p
              e' <- expression env e
              t' <- T.traverse (canonicalize Canonicalize.tipe "definition" p env) t
-             return $ D.Definition (Canonical.Definition p' e' t')
+             return $ D.Definition (Valid.Definition p' e' t')
 
       D.Datatype name tvars ctors ->
           D.Datatype name tvars <$> mapM canonicalize' ctors
@@ -176,16 +175,23 @@ declaration env decl =
 
       D.Fixity assoc prec op -> return $ D.Fixity assoc prec op
 
+formatError :: A.Region -> Canonicalizer String a -> Canonicalizer [Doc] a
+formatError region = Env.onError throw
+  where
+    throw err = P.vcat [ P.text "Error" <+> pretty region <> P.colon
+                       , P.text err
+                       ]
 
-expression :: Environment -> Valid.Expr -> Canonicalizer [Doc] Canonical.Expr
-expression env (A.A ann expr) =
+expression :: Environment -> Valid.RawExpr -> Canonicalizer [Doc] Valid.CanonicalExpr
+expression env expr@(A.A region _) =
+    A.A region <$> expression' env expr
+
+expression' :: Environment -> Valid.RawExpr -> Canonicalizer [Doc] Valid.CanonicalExpr'
+expression' env (A.A ann expr) =
     let go = expression env
         tipe' environ = format . Canonicalize.tipe environ
-        throw err = P.vcat [ P.text "Error" <+> pretty ann <> P.colon
-                           , P.text err ]
-        format = Env.onError throw
+        format = formatError ann
     in
-    A.A ann <$>
     case expr of
       Literal lit -> return (Literal lit)
 
@@ -215,14 +221,11 @@ expression env (A.A ann expr) =
       MultiIf ps -> MultiIf <$> mapM go' ps
               where go' (b,e) = (,) <$> go b <*> go e
 
-      Let defs e -> Let <$> mapM rename' defs <*> expression env' e
-          where
-            env' = foldr update env $ map (\(Valid.Definition p _ _) -> p) defs
-            rename' (Valid.Definition p body mtipe) =
-                Canonical.Definition
-                    <$> format (pattern env' p)
-                    <*> expression env' body
-                    <*> T.traverse (tipe' env') mtipe
+      Let defs e ->
+          do (env', defs') <- definitions ann env defs
+             Let defs' <$> expression env' e
+
+      With impl cmd -> command ann env impl cmd
 
       Var (Var.Raw x) -> Var <$> format (Canonicalize.variable env x)
 
@@ -256,3 +259,51 @@ pattern env ptrn =
       P.Data (Var.Raw name) ps ->
           P.Data <$> Canonicalize.pvar env name
                  <*> mapM (pattern env) ps
+
+definitions :: A.Region -> Environment -> [Valid.RawDef]
+            -> Canonicalizer [Doc] (Environment, [Valid.CanonicalDef])
+definitions region env defs =
+  do defs' <- mapM rename' defs
+     return (env', defs')
+  where
+    format = formatError region
+    env' = foldr update env $ map (\(Valid.Definition p _ _) -> p) defs
+    rename' (Valid.Definition p body mtipe) =
+                Valid.Definition
+                    <$> format (pattern env' p)
+                    <*> expression env' body
+                    <*> T.traverse (format . Canonicalize.tipe env') mtipe
+
+-- If a command starts with a CmdLet, it is lifted out of the command block.
+-- This way it can be merged with other blocks and reduce the number of closures
+-- in generated code. This also means the first command will never be a CmdLet.
+command :: A.Region -> Environment -> Valid.RawExpr -> Valid.RawCmd
+        -> Canonicalizer [Doc] Valid.CanonicalExpr'
+command region env impl cmd =
+  case cmd of
+    Valid.CmdLet defs cmd' ->
+        expression' env (A.A region (Let defs (A.A region (With impl cmd'))))
+
+    _ -> With <$> expression env impl <*> go env cmd
+  where
+    format = formatError region
+
+    go env cmd =
+      case cmd of
+        Valid.Do expr ->
+            Valid.Do <$> expression env expr
+
+        Valid.DoAnd expr cmd' ->
+            Valid.DoAnd <$> expression env expr <*> go env cmd'
+
+        Valid.CmdLet defs cmd' ->
+            do (env', defs') <- definitions region env defs
+               Valid.CmdLet defs' <$> go env' cmd'
+
+        Valid.AndThen pat expr mtipe cmd' ->
+            do let env' = update pat env
+               Valid.AndThen
+                   <$> format (pattern env' pat)
+                   <*> expression env' expr
+                   <*> T.traverse (format . Canonicalize.tipe env') mtipe
+                   <*> go env' cmd'

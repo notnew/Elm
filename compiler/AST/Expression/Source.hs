@@ -15,18 +15,54 @@ import qualified AST.Pattern as Pattern
 annotations and definitions, which is how they appear in source code and how
 they are parsed.
 -}
-type Expr = General.Expr Annotation.Region Def Var.Raw
-type Expr' = General.Expr' Annotation.Region Def Var.Raw
+type Expr = General.Expr Annotation.Region Def Cmds Var.Raw
+type Expr' = General.Expr' Annotation.Region Def Cmds Var.Raw
 
 data Def
     = Definition Pattern.RawPattern Expr
     | TypeAnnotation String RawType
     deriving (Show)
 
+data Cmds = Cmds [Cmd]
+    deriving (Show)
+
+data Cmd
+    = Do Expr
+    | CmdLet [CmdDef]
+    deriving (Show)
+
+data CmdDef
+    = Assign  Pattern.RawPattern Expr
+    | AndThen Pattern.RawPattern Expr
+    | TypeAnn String RawType
+    deriving (Show)
+
 instance Pretty Def where
   pretty def =
    case def of
-     TypeAnnotation name tipe ->
-         variable name <+> P.colon <+> pretty tipe
-     Definition pattern expr ->
-         pretty pattern <+> P.equals <+> pretty expr
+     TypeAnnotation name tipe -> prettyType name tipe
+     Definition pattern expr  -> prettyDef pattern "=" expr
+
+prettyDef :: Pattern.RawPattern -> String -> Expr -> Doc
+prettyDef pattern eq expr =
+    pretty pattern <+> P.text eq <+> pretty expr
+
+prettyType :: String -> RawType -> Doc
+prettyType name tipe =
+    variable name <+> P.colon <+> pretty tipe
+
+instance Pretty Cmds where
+  pretty (Cmds cmds) =
+      P.vcat (map prettyCommand cmds)
+
+prettyCommand :: Cmd -> Doc
+prettyCommand command =
+  case command of
+    Do expr     -> pretty expr
+    CmdLet defs -> P.text "let" <+> P.vcat (map cmdDef defs)
+  where
+    cmdDef def =
+        case def of
+          Assign  p e -> prettyDef p "=" e
+          AndThen p e -> prettyDef p "<-" e
+          TypeAnn n t -> prettyType n t

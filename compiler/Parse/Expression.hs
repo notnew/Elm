@@ -16,6 +16,7 @@ import AST.Expression.General
 import qualified AST.Expression.Source as Source
 import qualified AST.Literal as L
 import qualified AST.Pattern as P
+import qualified AST.Type as T
 import qualified AST.Variable as Var
 
 
@@ -179,13 +180,10 @@ lambdaExpr = do char '\\' <|> char '\x03BB' <?> "anonymous function"
                 body <- expr
                 return (makeFunction args body)
 
-defSet :: IParser [Source.Def]
-defSet = block (do d <- def ; whitespace ; return d)
-
 letExpr :: IParser Source.Expr'
 letExpr = do
   reserved "let" ; whitespace
-  defs <- defSet
+  defs <- blockOf def
   padded (reserved "in")
   Let defs <$> expr
 
@@ -197,10 +195,31 @@ caseExpr = do
                      padded arrow
                      (,) p <$> expr
           with    = brackets (semiSep1 (case_ <?> "cases { x -> ... }"))
-          without = block (do c <- case_ ; whitespace ; return c)
+          without = blockOf case_
+
+withExpr :: IParser Source.Expr'
+withExpr =
+  do reserved "with"
+     impl <- padded term
+     cmd <- Source.Cmds <$> blockOf cmd
+     return (With impl cmd)
+  where
+    cmd = choice [ Source.CmdLet <$> letBlock
+                 , Source.Do <$> expr
+                 ]
+
+    letBlock = do
+      try (reserved "let")
+      whitespace
+      blockOf cmdDef
+
+    cmdDef = typeAnnotation Source.TypeAnn
+          <|> definition (choice [ equals      >> return Source.Assign
+                                 , string "<-" >> return Source.AndThen
+                                 ])
 
 expr :: IParser Source.Expr
-expr = addLocation (choice [ ifExpr, letExpr, caseExpr ])
+expr = addLocation (choice [ ifExpr, letExpr, caseExpr, withExpr ])
     <|> lambdaExpr
     <|> binaryExpr 
     <?> "an expression"
@@ -229,15 +248,15 @@ makeFunction :: [P.RawPattern] -> Source.Expr -> Source.Expr
 makeFunction args body@(A ann _) =
     foldr (\arg body' -> A ann $ Lambda arg body') body args
 
-definition :: IParser Source.Def
-definition = withPos $ do
+definition :: IParser (P.RawPattern -> Source.Expr -> a) -> IParser a
+definition equality = withPos $ do
   (name:args) <- defStart
-  padded equals
+  f <- padded equality
   body <- expr
-  return . Source.Definition name $ makeFunction args body
+  return $ f name (makeFunction args body)
 
-typeAnnotation :: IParser Source.Def
-typeAnnotation = Source.TypeAnnotation <$> try start <*> Type.expr
+typeAnnotation :: (String -> T.RawType -> a) -> IParser a
+typeAnnotation f = f <$> try start <*> Type.expr
   where
     start = do
       v <- lowVar <|> parens symOp
@@ -245,4 +264,5 @@ typeAnnotation = Source.TypeAnnotation <$> try start <*> Type.expr
       return v
 
 def :: IParser Source.Def
-def = typeAnnotation <|> definition
+def = typeAnnotation Source.TypeAnnotation
+   <|> definition (equals >> return Source.Definition)

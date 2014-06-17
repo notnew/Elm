@@ -6,7 +6,7 @@ import qualified Data.List as List
 import qualified Data.Map as Map
 import Control.Applicative ((<$>),(<*>))
 
-import qualified AST.Expression.Canonical as Canonical
+import AST.Expression.Valid (CanonicalExpr)
 import qualified AST.Declaration as Decl
 import qualified AST.Type as Type
 import qualified AST.Variable as Var
@@ -29,7 +29,7 @@ getName modul =
     List.intercalate "." (names modul)
 
 data CanonicalBody = CanonicalBody
-    { program   :: Canonical.Expr
+    { program   :: CanonicalExpr
     , types     :: Types
     , fixities  :: [(Decl.Assoc, Int, String)]
     , aliases   :: Aliases

@@ -37,7 +37,7 @@ tupleOf ts = App (Type t) ts
   where
     t = Var.Raw ("_Tuple" ++ show (length ts))
 
-instance (Var.ToString var, Pretty var) => Pretty (Type var) where
+instance (Var.ToString var) => Pretty (Type var) where
   pretty tipe =
     case tipe of
       Lambda _ _ -> P.sep [ t, P.sep (map (P.text "->" <+>) ts) ]
@@ -85,7 +85,7 @@ collectLambdas tipe =
     Lambda arg body -> arg : collectLambdas body
     _ -> [tipe]
 
-prettyParens :: (Var.ToString var, Pretty var) => Type var -> Doc
+prettyParens :: (Var.ToString var) => Type var -> Doc
 prettyParens tipe = parensIf (needed tipe) (pretty tipe)
   where
     needed t =

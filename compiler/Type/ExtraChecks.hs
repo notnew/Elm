@@ -15,10 +15,10 @@ import qualified Data.UnionFind.IO as UF
 import Text.PrettyPrint as P
 
 import qualified AST.Annotation as A
-import qualified AST.Expression.Canonical as Canonical
+import qualified AST.Expression.Valid as Valid
 import qualified AST.PrettyPrint as PP
 import qualified AST.Type as ST
-import qualified AST.Variable as V
+import qualified AST.Variable as Var
 import qualified Transform.Expression as Expr
 import qualified Type.Type as TT
 import qualified Type.State as TS
@@ -51,7 +51,7 @@ mainType environment =
 
 data Direction = In | Out
 
-portTypes :: (Monad m) => Canonical.Expr -> ErrorT [P.Doc] m ()
+portTypes :: (Monad m) => Valid.CanonicalExpr -> ErrorT [P.Doc] m ()
 portTypes expr =
   case Expr.checkPorts (check In) (check Out) expr of
     Left err -> throwError err
@@ -63,20 +63,20 @@ portTypes expr =
           ST.Aliased _ t -> valid t
 
           ST.Type v
-              | V.isJson v      -> return ()
-              | V.isPrimitive v -> return ()
+              | Var.isJson v      -> return ()
+              | Var.isPrimitive v -> return ()
               | otherwise       -> err "an unsupported type"
 
           ST.App t [] -> valid t
 
           ST.App (ST.Type v) [t]
-              | V.isSignal v -> handleSignal t
-              | V.isMaybe  v -> valid t
-              | V.isArray  v -> valid t
-              | V.isList   v -> valid t
+              | Var.isSignal v -> handleSignal t
+              | Var.isMaybe  v -> valid t
+              | Var.isArray  v -> valid t
+              | Var.isList   v -> valid t
 
           ST.App (ST.Type v) ts
-              | V.isTuple v -> mapM_ valid ts
+              | Var.isTuple v -> mapM_ valid ts
                     
           ST.App _ _ -> err "an unsupported type"
 

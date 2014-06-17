@@ -15,7 +15,7 @@ import qualified Text.Parsec.Token as T
 
 import AST.Annotation as Annotation
 import AST.Declaration (Assoc)
-import AST.Expression.General
+import AST.Expression.General as E
 import qualified AST.Expression.Source as Source
 import AST.Helpers as Help
 import AST.Literal as Literal
@@ -30,6 +30,7 @@ reserveds = [ "if", "then", "else"
             , "import", "as", "hiding", "open"
             , "export", "foreign"
             , "deriving", "port"
+            , "with"
             ]
 
 expecting = flip (<?>)
@@ -81,7 +82,7 @@ anyOp = betwixt '`' '`' qualifiedVar <|> symOp <?> "infix operator (e.g. +, *, |
 
 symOp :: IParser String
 symOp = do op <- many1 (satisfy Help.isSymbol)
-           guard (op `notElem` [ "=", "..", "->", "--", "|", "\8594", ":" ])
+           guard (op `notElem` [ "=", "..", "->", "<-", "--", "|", "\8594", ":" ])
            case op of
              "." -> notFollowedBy lower >> return op
              "\8728" -> return "."
@@ -94,7 +95,7 @@ padded p = do whitespace
               return out
 
 equals :: IParser String
-equals = string "="
+equals = string "=" <?> "equals sign (=)"
 
 arrow :: IParser String
 arrow = string "->" <|> string "\8594" <?> "arrow (->)"
@@ -144,6 +145,12 @@ constrainedSpacePrefix p constraint =
         n <- whitespace
         constraint n
         indented
+
+blockOf p =
+    block $ do
+      v <- p
+      whitespace
+      return v
 
 failure msg = do
   inp <- getInput
